@@ -8,7 +8,7 @@ use HTML::Entities qw(decode_entities);
 
 our @ISA = qw(WWW::Scraper::ISBN::Driver);
 
-our $VERSION = '0.1';
+our $VERSION = '0.2';
                 
 sub search {
         my $self = shift;
@@ -16,7 +16,7 @@ sub search {
         $self->found(0);
         $self->book(undef);
 	
-        my $post_url = "http://www.libreriauniversitaria.it/c_search.php?noinput=1&isbn_query=" . $isbn;
+	my $post_url = 'http://www.libreriauniversitaria.it/c_power_search.php?shelf=BIT&q=' . $isbn . '&submit=Invia';
         my $ua = new LWP::UserAgent;
         my $res = $ua->get($post_url);
         my $doc = $res->as_string;
@@ -27,30 +27,37 @@ sub search {
 	my $date = "";
 	my $price = "";
         
-        unless ($doc =~ /Risultati della ricerca Libri Italiani/) {
-	    $self->error("libro non trovato.\n");
+        if ($doc =~ /Nessun prodotto corrisponde ai criteri di ricerca/) {
+	    $self->error("book not found.");
 	    $self->found(0);
 	    return 0;
-	}
-	
-	$title = $1 if ($doc =~ /<a class="btitle" href="[^"]+"\s*>([^<]+)<\/a>/);
+	} elsif ($doc =~ m|<title>Ricerca - $isbn - libreriauniversitaria\.it</title>|i){
+		my $info;
+		if ($doc =~ m|<td [^>]+><a [^>]+ class="product_heading_title_link" [^>]+>([^<]+)</a>(.*?)</td>|){
+			$title = $1;
+			$info = $2;
+			$authors = parse_authors($info);
+			if ($info =~ m|<a[^>]+ href="libri-editore[^"]+" [^>]+/>([^<]+)</a> - (\d+)|){
+			    $editor = $1;
+			    $date = $2;
+			}
+		}
+		$price = $1 if ($doc =~ /Prezzo: .*?&euro;&nbsp;(\d+)/);
+	} elsif ($doc =~ /Dettagli del libro/){
+		$price = $1 if ($doc =~ m|<span class="product_price">&euro;&nbsp;([^<]+)</span>|);
+		$title = $1 if ($doc =~ m|<span class="product_label">Titolo:</span> <span class="product_text">([^>]+)</span>|);
+		$authors = parse_authors($1) if ($doc =~ m|<span class="product_label">Autor[ei]:</span>(.*?)<li>|);
+		$editor = $1 if ($doc =~ m|<span class="product_label">Editore:</span>.*?<a href="libri-editore[^"]+"[^>]+/>([^<]+)</a></span><li>|);
+		$date = $1 if ($doc =~ m|<span class="product_label">Data di Pubblicazione:</span>\s+<span class="product_text">(\d+)</span><li>|);
+		
+	} else {
+		$self->error("liberiauniversitaria.it answered in an unattended way, book information cannot be found.");
+		$self->found(0);
+	};
+
 	decode_entities($title);	
-	if ($doc =~ /Autor[ei]: <em>(.+)<\/em>/) {
-	    my $authorslist = $1;
-	    my $sep = "";
-	    while ($authorslist =~ s/<a href="[^"]+">([^<]+)<\/a>,?//) {
-		$authors .=  $sep . $1;
-		$sep = ", ";
-	    }
-	}
 	decode_entities($authors);	
-	if ($doc =~ /<a href="goto\/publisher_[^"]+">([^<]+)<\/a>, (\d{4})/){
-	    $editor = $1;
-	    $date = $2;
-	}
 	decode_entities($editor);	
-	$price = $1 if ($doc =~ /&euro;&nbsp;(\d+)/);
-        
 	my $bk = {   
                 'isbn' => $isbn,
                 'author' => $authors,
@@ -62,6 +69,17 @@ sub search {
 	$self->book($bk);
 	$self->found(1);
         return $bk;
+}
+
+sub parse_authors {
+	my $info = shift;
+	my $sep = "";
+	my $authors;
+	while ($info =~ s|<a href="libri-autore[^"]+" [^>]+>([^<]+)</a>||){
+		$authors .=  $sep . $1;
+		$sep = ", ";
+	}
+	return $authors;
 }
 
 1;
